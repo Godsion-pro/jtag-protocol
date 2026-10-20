@@ -1,0 +1,16 @@
+! openocd/check_trst.svf - TRST* pulse with BYPASS selected must restore IDCODE (IEEE 1149.1-2013 7.2.1 f).
+! After TRST* the only TCK edges are TLR -> RTI (TMS=0), so there is no falling edge inside
+! Test-Logic-Reset: the IDCODE comes from the asynchronous TRST* reset alone, not from 7.2.1 e.
+TRST OFF;
+ENDIR IDLE;
+ENDDR IDLE;
+STATE RESET;
+STATE IDLE;
+! BYPASS (all ones, 8.4.1 b); Capture-IR pattern 00001 checked on the two LSBs (7.1.1 d)
+SIR 5 TDI (1f) TDO (01) MASK (03);
+! BYPASS selected: capture 0, then TDI delayed one bit -> 0x4d in, 0x9a out (10.1.1 b)
+SDR 8 TDI (4d) TDO (9a) MASK (ff);
+TRST ON;
+TRST OFF;
+STATE IDLE;
+SDR 32 TDI (00000000) TDO (deadbeef) MASK (ffffffff);

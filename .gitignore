@@ -1,0 +1,10 @@
+# IEEE 1149.1-2013 PDF: 저작권 문서, 기관 라이선스 사본 (CLAUDE.md §3) — 저장소에 올리지 않음
+docs/ref/
+
+# 빌드 산출물
+obj_dir/
+sim/obj_dir/
+sim/*.vvp
+
+# 시뮬레이션·툴 로그 (CLAUDE.md §6 명령으로 재생성)
+sim/logs/

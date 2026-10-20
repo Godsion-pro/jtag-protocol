@@ -1,0 +1,10 @@
+# 줄바꿈 LF 고정: WSL bash/make에서 CRLF로 스크립트·Makefile이 깨지는 것을 방지 (core.autocrlf=true 환경)
+* text=auto eol=lf
+
+# 바이너리
+*.pdf binary
+*.png binary
+*.jpg binary
+*.gds binary
+*.tgz binary
+*.gz  binary
