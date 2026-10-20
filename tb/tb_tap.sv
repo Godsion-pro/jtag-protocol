@@ -14,6 +14,8 @@
 //   S5 TMS=1 x5 -> TLR from all 16 states   S10 3-TAP chain
 // Always-on monitors: tdo_oe vs. reference model at every TCK edge, TDO/tdo_oe edge checker.
 // Last line: "ALL TESTS PASSED" or "N FAILURES" (non-zero exit on failure).
+// GLS: compile with GLS defined (plus GLS_MIN for fast-corner delays) against the post-route netlist,
+// see gls/run_gls.sh.
 
 module tb_tap;
 
@@ -64,12 +66,39 @@ module tb_tap;
     wire       tdo_obs = sel_chain ? c2_tdo : dut_tdo;
     wire       oe_obs  = sel_chain ? c2_oe  : dut_oe;
 
-    jtag_tap u_dut (.tck(tck), .tms(tms), .tdi(tdi),    .trst_n(trst_n), .tdo(dut_tdo), .tdo_oe(dut_oe));
+    // RTL: jtag_tap. GLS: the post-route netlist top kh_jtag_top (same ports), because the SDF's
+    // DESIGN is kh_jtag_top. Expectations and scenarios are identical in both cases.
+`ifdef GLS
+    `define KH_TAP kh_jtag_top
+`else
+    `define KH_TAP jtag_tap
+`endif
+
+    `KH_TAP u_dut (.tck(tck), .tms(tms), .tdi(tdi),    .trst_n(trst_n), .tdo(dut_tdo), .tdo_oe(dut_oe));
 
     // 3-TAP chain for S10: TDI -> u_c0 -> u_c1 -> u_c2 -> TDO, shared TCK/TMS/TRST*.
-    jtag_tap u_c0  (.tck(tck), .tms(tms), .tdi(tdi),    .trst_n(trst_n), .tdo(c0_tdo),  .tdo_oe(c0_oe));
-    jtag_tap u_c1  (.tck(tck), .tms(tms), .tdi(c0_tdo), .trst_n(trst_n), .tdo(c1_tdo),  .tdo_oe(c1_oe));
-    jtag_tap u_c2  (.tck(tck), .tms(tms), .tdi(c1_tdo), .trst_n(trst_n), .tdo(c2_tdo),  .tdo_oe(c2_oe));
+    `KH_TAP u_c0  (.tck(tck), .tms(tms), .tdi(tdi),    .trst_n(trst_n), .tdo(c0_tdo),  .tdo_oe(c0_oe));
+    `KH_TAP u_c1  (.tck(tck), .tms(tms), .tdi(c0_tdo), .trst_n(trst_n), .tdo(c1_tdo),  .tdo_oe(c1_oe));
+    `KH_TAP u_c2  (.tck(tck), .tms(tms), .tdi(c1_tdo), .trst_n(trst_n), .tdo(c2_tdo),  .tdo_oe(c2_oe));
+
+`ifdef GLS
+    // SDF back-annotation of every TAP instance. GLS_MIN selects the fast-corner (min) delays,
+    // otherwise the slow-corner (max) delays. GLS_SDF overrides the SDF path.
+`ifndef GLS_SDF
+    `define GLS_SDF "pnr/out/kh_jtag_top.pnr.sdf"
+`endif
+`ifdef GLS_MIN
+    `define GLS_MTM "MINIMUM"
+`else
+    `define GLS_MTM "MAXIMUM"
+`endif
+    initial begin
+        $sdf_annotate(`GLS_SDF, u_dut, , , `GLS_MTM);
+        $sdf_annotate(`GLS_SDF, u_c0,  , , `GLS_MTM);
+        $sdf_annotate(`GLS_SDF, u_c1,  , , `GLS_MTM);
+        $sdf_annotate(`GLS_SDF, u_c2,  , , `GLS_MTM);
+    end
+`endif
 
     `include "jtag_drv.svh"
 
@@ -356,7 +385,8 @@ module tb_tap;
     endtask
 
     // S6: TRST* resets the TAP asynchronously (no TCK edge needed) and holds it in Test-Logic-Reset.
-    // Release with TCK stopped or with TMS=1 (decisions.md D-001).
+    // Release with TCK stopped (a: at 0, b: at 1) or with TCK running and TMS=1 (c) (decisions.md D-001).
+    // (c) releases at a TCK rise in RTL and mid low phase in GLS (decisions.md D-006).
     // 4.6.1 a, e; 6.1.3.1 c; 6.1.2.1 a; 7.2.1 f; 4.5.1 a
     task automatic s6_trst_async();
         sc_begin("S6 TRST* asynchronous reset");
@@ -405,7 +435,7 @@ module tb_tap;
         tick(1'b0, 1'b1);
         check_idcode("S6b IR = IDCODE after TRST* with TCK stopped at 1");
 
-        // (c) TCK running with TMS = 1; release in the same time step as a rising edge
+        // (c) TCK running with TMS = 1
         reset_to_rti();
         load_ir(IR_BYPASS);
         tms_seq(32'b100, 3);
@@ -414,15 +444,28 @@ module tb_tap;
         repeat (2) tick(1'b1, 1'b1);
         tms = 1'b1;
         tdi = 1'b1;
+`ifdef GLS
+        // Gate level: release in the middle of the low phase (30 ns after TCK fall, 20 ns before the
+        // next rise). A release in the same time step as the rise is a recovery/removal violation by
+        // construction, and the cell models turn it into X through their notifiers, which cannot
+        // express D-001's "either outcome is Test-Logic-Reset" argument (decisions.md D-006).
+        #((T_HALF - T_DRV) / 2.0);
+        drive_trst_n(1'b1);
+        #((T_HALF - T_DRV) / 2.0);
+        drive_tck(1'b1);
+`else
+        // RTL: release in the same time step as a rising edge (D-001: with TMS = 1 the result is
+        // Test-Logic-Reset whether or not that edge is seen).
         #(T_HALF - T_DRV);
         drive_trst_n(1'b1);
         drive_tck(1'b1);
+`endif
         #(T_HALF);
         drive_tck(1'b0);
         #(T_DRV);
         tick(1'b1, 1'b1);
         tick(1'b0, 1'b1);
-        check_idcode("S6c IR = IDCODE after TRST* released at a TCK rise with TMS=1");
+        check_idcode("S6c IR = IDCODE after TRST* released while TCK runs with TMS=1");
 
         sc_end();
     endtask

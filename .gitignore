@@ -8,3 +8,12 @@ sim/*.vvp
 
 # 시뮬레이션·툴 로그 (CLAUDE.md §6 명령으로 재생성)
 sim/logs/
+gls/logs/
+gls/xcelium.d*/
+
+# 라이브러리 파생물: gsclib045(Cadence Design Materials) 라이선스는 조직 내부 평가·시연 용도로 한정하고
+# 배포를 금지하므로 넷리스트·SDF·DEF·리포트와 툴 로그는 저장소에 올리지 않는다 (docs/decisions.md D-007)
+syn/out/
+syn/rpt/
+pnr/out/
+pnr/rpt/

@@ -7,7 +7,7 @@
 - 3단계: RISC-V Debug Spec(0.13.2 호환, v1.0 참조) JTAG-DTM(dtmcs/dmi) + 최소 Debug Module을
   RV32 코어에 연결, Verilator 시뮬에서 OpenOCD/GDB로 halt/resume/레지스터 접근 시연.
 - 구현 환경: Cadence Genus + Innovus, 45nm 표준셀(GSCLIB045 v4.7, Cadence GPDK045 기반, `gsclib045_all_v4.7` 패키지 중 SVT `gsclib045` 사용). FPGA 보드 없음, 외부 JTAG 어댑터 없음.
-  - 원격 Linux 서버 (CentOS 7.9, 로그인 셸 csh). 라이브러리 루트: `<dir>/gsclib045_all_v4.7/gsclib045/`
+  - 원격 Linux 서버 (CentOS 7.9, 로그인 셸 csh). 라이브러리 루트는 환경변수로 지정: `setenv GSCLIB045_ROOT <dir>/gsclib045_all_v4.7/gsclib045` (syn/pnr/gls 스크립트가 읽음)
     - Liberty: `timing/{slow,fast}_vdd1v0_basicCells.lib` (데모용 라이브러리 → PPA는 데모 수준임을 results.md에 명시)
     - LEF: `lef/gsclib045_tech.lef`, `lef/gsclib045_macro.lef` / QRC: `qrc/qx/gpdk045.tch` / GLS 셀 모델: `verilog/{slow,fast}_vdd1v0_basicCells.v` / GDS: `gds/`
   - 툴: Genus·Innovus DDI231 (23.14), Xcelium XCELIUMMAIN2309 (23.09, GLS). Calibre/Pegasus는 PATH에 없음 → 사인오프 DRC/LVS 불가, Innovus 내장 검사만.
@@ -26,8 +26,8 @@ rtl/        Verilog-2001 RTL (*.v). 1 모듈 = 1 파일, 파일명 = 모듈명
 tb/         SystemVerilog TB (*.sv), tb/jtag_drv.svh 공용 태스크. RTL/GLS 공용으로 작성
 sim/        Verilator C++ (rbb_server.cpp, main_*.cpp), Makefile
 openocd/    sim_tap.cfg, sim_riscv.cfg
-syn/        Genus: syn.tcl, constraints.sdc, out/(netlist .vg, .sdc, .sdf), rpt/
-pnr/        Innovus: pnr.tcl, mmmc.tcl, out/(netlist, .sdf, .def, .gds), rpt/
+syn/        Genus: syn.tcl, constraints.sdc, out/(netlist .vg, .sdc, .sdf), rpt/   # out/, rpt/는 저장소 미포함 (D-007)
+pnr/        Innovus: pnr.tcl, mmmc.tcl, out/(netlist, .sdf, .def, .gds), rpt/  # out/, rpt/는 저장소 미포함 (D-007)
 gls/        게이트 레벨 시뮬 스크립트 (post-syn / post-route, SDF 백어노테이션)
 docs/       spec_notes.md(스펙 조항+요약), decisions.md(설계 결정/편차), results.md(수치), kh_jtag.bsd
 ```
@@ -95,7 +95,7 @@ set_load 0.01 [all_outputs]                                ;# PDK 단위 확인 
       16개 상태 각각에서 TMS=1×5→TLR / TRST 비동기 / Pause·Exit2 경유 연속성 / tdo_oe 구간 /
       TDO가 TCK 하강에서만 변화 / 3-TAP 체인 IR 길이·디바이스 수 탐지
 - [x] sim/rbb_server.cpp + openocd/sim_tap.cfg
-- [ ] syn/syn.tcl(Genus), pnr/pnr.tcl(Innovus), gls/ 스크립트
+- [x] syn/syn.tcl(Genus), pnr/pnr.tcl(Innovus), gls/ 스크립트 (현황: docs/results.md 1.8)
 - 완료 기준:
   (a) RTL TB `ALL TESTS PASSED` + `TAP arc coverage: 32/32`, `verilator --lint-only -Wall` 경고 0
   (b) OpenOCD 로그에 `tap/device found: 0xdeadbeef`
@@ -129,15 +129,17 @@ iverilog -g2012 -Wall -Wno-timescale -Itb -o sim/tb_tap.vvp tb/tb_tap.sv rtl/jta
 make -C sim rbb_tap && ./sim/obj_dir/Vrbb_tap +port=9999   # 터미널 1
 openocd -f openocd/sim_tap.cfg                              # 터미널 2
 bash sim/check_openocd_tap.sh                               # 위 두 단계 자동 실행 + IDCODE/BYPASS/TRST(SVF) 판정
-genus   -files syn/syn.tcl   -log syn/rpt/genus.log
-innovus -files pnr/pnr.tcl   -log pnr/rpt/innovus.log
-# GLS: Xcelium 사용 시 표준셀 Verilog 모델 + $sdf_annotate (Verilator는 SDF 미지원)
+genus -batch -abort_on_error -no_gui -files syn/syn.tcl -log syn/rpt/genus   # 서버 ~/kh-jtag에서. -log는 접두어(genus.log/.cmd 생성)
+innovus -stylus -batch -abort_on_error -no_gui -files pnr/pnr.tcl -log pnr/rpt/innovus   # 서버. 로그 "**ERROR" 0줄도 확인
+bash gls/run_gls.sh                                         # 서버. post-route GLS max/min (Xcelium + $sdf_annotate)
 ```
 - 모든 TB는 마지막 줄에 `ALL TESTS PASSED` 또는 `N FAILURES` 출력, 실패 시 non-zero exit.
   실패 시 시뮬레이터가 그 뒤에 자체 메시지를 덧붙이므로(Verilator `Aborting...` exit 134, iverilog `FATAL` exit 1) 판정은 exit code + 요약 줄 grep (docs/results.md §0).
 - 명령은 WSL2 Ubuntu-24.04의 프로젝트 루트(`/mnt/c/Users/sions/Desktop/kh-jtag`)에서 실행.
+- genus/innovus/gls 명령은 서버의 프로젝트 사본(`~/kh-jtag`)에서, `GSCLIB045_ROOT`를 설정한 뒤 실행.
 - Genus/Innovus 명령은 설치된 버전(Stylus/legacy UI)에 맞춰 확인 후 작성. 추측한 명령으로 스크립트를 완성됐다고 보고하지 말 것.
 - 리포트는 syn/rpt, pnr/rpt에 저장: area(계층별), timing(setup/hold, TDO 경로 포함), power, qor.
+  라이브러리 파생물(넷리스트·SDF·DEF·리포트)은 라이선스상 공개 저장소에 올리지 않는다 (docs/decisions.md D-007).
 
 ## 7. 하지 말아야 할 것
 - 스펙에 없는 동작을 추측해 구현하지 말 것. 불명확하면 docs/spec_notes.md에 "UNVERIFIED"로 남기고 질문.
